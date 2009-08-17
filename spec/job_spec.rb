@@ -2,7 +2,8 @@ require File.dirname(__FILE__) + '/database'
 
 class SimpleJob
   cattr_accessor :runs; self.runs = 0
-  def perform; @@runs += 1; end
+  cattr_accessor :result;
+  def perform; @@runs += 1; @@result; end
 end
 
 class ErrorJob
@@ -18,6 +19,14 @@ module M
   
 end
 
+class NoYamlObject
+  def id
+    21
+  end
+
+  undef to_yaml
+end
+
 describe Delayed::Job do
   before  do               
     Delayed::Job.max_priority = nil
@@ -28,6 +37,10 @@ describe Delayed::Job do
   
   before(:each) do
     SimpleJob.runs = 0
+  end
+
+  it "should have a NoYamlObject test that does not respond to_yaml" do
+    NoYamlObject.new.respond_to?(:to_yaml).should == false
   end
 
   it "should set run_at automatically if not set" do
@@ -69,8 +82,50 @@ describe Delayed::Job do
 
     SimpleJob.runs.should == 1
   end
-                     
-                     
+
+  it "should set result if result responds to to_yaml" do
+    Delayed::Job.destroy_completed_jobs = false
+    SimpleJob.result = 343
+
+    SimpleJob.runs.should == 0
+
+    Delayed::Job.enqueue SimpleJob.new
+    Delayed::Job.work_off
+
+    SimpleJob.runs.should == 1
+  
+    YAML.load(Delayed::Job.first.result).should == SimpleJob.result
+  end
+
+  it "should not set result if result does not respond to to_yaml" do
+    Delayed::Job.destroy_completed_jobs = false
+    SimpleJob.result = NoYamlObject.new
+
+    SimpleJob.runs.should == 0
+
+    Delayed::Job.enqueue SimpleJob.new
+    Delayed::Job.work_off
+
+    SimpleJob.runs.should == 1
+  
+    Delayed::Job.first.result.should == nil
+  end
+
+  it "should set owner id properly for strings" do
+    owner = 'some_crap'
+    Delayed::Job.enqueue_for owner, SimpleJob.new
+    Delayed::Job.first.owner.should == Delayed::Job.owner_key_for(owner)
+    
+    puts owner
+    puts Delayed::Job.first.owner
+  end
+
+  it "should set owner id properly for AR objects" do
+    owner = Delayed::Job.create!(:completed => true)
+    Delayed::Job.enqueue_for owner, SimpleJob.new
+    Delayed::Job.last.owner.should == Delayed::Job.owner_key_for(owner)
+  end
+
   it "should work with eval jobs" do
     $eval_job_ran = false
 
@@ -100,7 +155,7 @@ describe Delayed::Job do
     job = Delayed::Job.find(:first)
 
     job.last_error.should =~ /did not work/
-    job.last_error.should =~ /job_spec.rb:10:in `perform'/
+    job.last_error.should =~ /job_spec.rb:11:in `perform'/
     job.attempts.should == 1
 
     job.run_at.should > Delayed::Job.db_time_now - 10.minutes

@@ -3,7 +3,11 @@ module Delayed
     def send_later(method, *args)
       Delayed::Job.enqueue Delayed::PerformableMethod.new(self, method.to_sym, args)
     end
-    
+   
+    def private_job(owner, method, *args)
+      Delayed::Job.enqueue_for owner, Delayed::PerformableMethod.new(self, method.to_sym, args)
+    end
+
     module ClassMethods
       def handle_asynchronously(method)
         without_name = "#{method}_without_send_later"

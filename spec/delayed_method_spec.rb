@@ -36,6 +36,10 @@ class StoryReader
 
 end
 
+class IdLessObject
+  undef id
+end
+
 describe 'random ruby objects' do
   before       { Delayed::Job.delete_all }
 
@@ -45,8 +49,20 @@ describe 'random ruby objects' do
 
   end
 
-  it "should raise a ArgumentError if send_later is called but the target method doesn't exist" do
+  it "should respond_to :private_job" do
+    RandomRubyObject.new.respond_to?(:private_job)
+  end
+
+  it "should raise a NoMethodError if send_later is called but the target method doesn't exist" do
     lambda { RandomRubyObject.new.send_later(:method_that_deos_not_exist) }.should raise_error(NoMethodError)
+  end
+
+  it "should raise a NoMethodError if private_job is called but the target method doesn't exist" do
+    lambda { RandomRubyObject.new.private_job(self, :method_that_deos_not_exist) }.should raise_error(NoMethodError)
+  end
+
+  it "should raise a NoMethodError if private_job is called but the owner does not respond to id" do
+    lambda { RandomRubyObject.new.private_job(IdLessObject.new, :method_that_deos_not_exist) }.should raise_error(NoMethodError)
   end
 
   it "should add a new entry to the job table when send_later is called on it" do

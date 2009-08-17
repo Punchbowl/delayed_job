@@ -15,6 +15,9 @@ module Delayed
     # for the failure), set this to false.
     cattr_accessor :destroy_failed_jobs
     self.destroy_failed_jobs = true
+    
+    cattr_accessor :destroy_completed_jobs
+    self.destroy_completed_jobs = true
 
     # Every worker has a unique name which by default is the pid of the process.
     # There are some advantages to overriding this with something which survives worker retarts:
@@ -22,7 +25,7 @@ module Delayed
     cattr_accessor :worker_name
     self.worker_name = "host:#{Socket.gethostname} pid:#{Process.pid}" rescue "pid:#{Process.pid}"
 
-    NextTaskSQL         = '(run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR (locked_by = ?)) AND failed_at IS NULL'
+    NextTaskSQL         = 'completed = ? AND (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR (locked_by = ?)) AND failed_at IS NULL'
     NextTaskOrder       = 'priority DESC, run_at ASC'
 
     ParseObjectFromYaml = /\!ruby\/\w+\:([^\s]+)/
@@ -90,7 +93,12 @@ module Delayed
       begin
         runtime =  Benchmark.realtime do
           invoke_job # TODO: raise error if takes longer than max_run_time
-          destroy
+          if destroy_completed_jobs
+            destroy
+          else
+            self.completed = true
+            save
+          end
         end
         # TODO: warn if runtime > max_run_time ?
         logger.info "* [JOB] #{name} completed after %.4f" % runtime
@@ -113,7 +121,31 @@ module Delayed
       priority = args.first || 0
       run_at   = args[1]
 
-      Job.create(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
+      Job.create!(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
+    end
+
+    def self.enqueue_for(owned_by, *args, &block)
+      object = block_given? ? EvaledJob.new(&block) : args.shift
+    
+      owner_key = self.owner_key_for(owned_by)
+
+      priority = args.first || 0
+      run_at   = args[1]
+
+      Job.create!(:payload_object => object, :priority => priority.to_i, :run_at => run_at,
+                 :owner => owner_key)
+    end
+
+    def self.owner_key_for(owned_by)
+      case owned_by
+      when String
+        owned_by
+      when ActiveRecord::Base
+        raise(ArgumentError, 'Owner cannot be a new_record') if owned_by.new_record?
+        "#{owned_by.class}_#{owned_by.id}"
+      else
+        raise ArgumentError, 'Only strings and descendants of ActiveRecord::Base are allowed'
+      end
     end
 
     # Find a few candidate jobs to run (in case some immediately get locked by others).
@@ -124,7 +156,7 @@ module Delayed
 
       sql = NextTaskSQL.dup
 
-      conditions = [time_now, time_now - max_run_time, worker_name]
+      conditions = [false, time_now, time_now - max_run_time, worker_name]
 
       if self.min_priority
         sql << ' AND (priority >= ?)'
@@ -214,7 +246,13 @@ module Delayed
 
     # Moved into its own method so that new_relic can trace it.
     def invoke_job
-      payload_object.perform
+      res = payload_object.perform
+    
+      if res.respond_to? :to_yaml
+        self.result = res.to_yaml
+      else
+        logger.info "* [JOB] res does not respond to #to_yaml"
+      end
     end
 
   private
@@ -258,6 +296,11 @@ module Delayed
       self.run_at ||= self.class.db_time_now
     end
 
+    if !defined?(logger)
+      def logger
+        StdoutLogger.new
+      end
+    end
   end
 
   class EvaledJob
@@ -268,5 +311,11 @@ module Delayed
     def perform
       eval(@job)
     end
+  end
+end
+
+class StdoutLogger
+  def method_missing(*args, &block)
+    puts *args[1..-1]
   end
 end

@@ -1,5 +1,5 @@
 module Delayed
-  class PerformableMethod < Struct.new(:object, :method, :args)
+  class PerformableMethod < Struct.new(:object, :method, :args, :owner)
     CLASS_STRING_FORMAT = /^CLASS\:([A-Z][\w\:]+)$/
     AR_STRING_FORMAT    = /^AR\:([A-Z][\w\:]+)\:(\d+)$/
 
