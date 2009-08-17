@@ -136,6 +136,10 @@ module Delayed
                  :owner => owner_key)
     end
 
+    def belongs_to?(potential_owner)
+      self.owner == self.class.owner_key_for(potential_owner)
+    end
+
     def self.owner_key_for(owned_by)
       case owned_by
       when String

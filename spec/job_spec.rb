@@ -115,9 +115,21 @@ describe Delayed::Job do
     owner = 'some_crap'
     Delayed::Job.enqueue_for owner, SimpleJob.new
     Delayed::Job.first.owner.should == Delayed::Job.owner_key_for(owner)
-    
-    puts owner
-    puts Delayed::Job.first.owner
+  end
+
+  it "should return true when appropriate on belongs_to? for strings" do
+    owner = 'some_crap'
+    Delayed::Job.enqueue_for owner, SimpleJob.new
+    Delayed::Job.first.belongs_to?(owner).should == true
+    Delayed::Job.first.belongs_to?('bite me').should == false
+  end
+
+  it "should return true when appropriate on belongs_to? for AR::B's" do
+    owner = Delayed::Job.create!(:completed => true)
+    not_owner = Delayed::Job.create!(:completed => true)
+    job = Delayed::Job.enqueue_for owner, SimpleJob.new
+    job.belongs_to?(owner).should == true
+    job.belongs_to?(not_owner).should == false
   end
 
   it "should set owner id properly for AR objects" do
